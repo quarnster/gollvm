@@ -46,14 +46,15 @@ type (
 	Use struct {
 		C C.LLVMUseRef
 	}
-	Attribute      C.LLVMAttribute
-	Opcode         C.LLVMOpcode
-	TypeKind       C.LLVMTypeKind
-	Linkage        C.LLVMLinkage
-	Visibility     C.LLVMVisibility
-	CallConv       C.LLVMCallConv
-	IntPredicate   C.LLVMIntPredicate
-	FloatPredicate C.LLVMRealPredicate
+	Attribute        C.LLVMAttribute
+	Opcode           C.LLVMOpcode
+	TypeKind         C.LLVMTypeKind
+	Linkage          C.LLVMLinkage
+	Visibility       C.LLVMVisibility
+	CallConv         C.LLVMCallConv
+	IntPredicate     C.LLVMIntPredicate
+	FloatPredicate   C.LLVMRealPredicate
+	LandingPadClause C.LLVMLandingPadClauseTy
 )
 
 func (c Context) IsNil() bool        { return c.C == nil }
@@ -298,6 +299,15 @@ const (
 	FloatULE            FloatPredicate = C.LLVMRealULE
 	FloatUNE            FloatPredicate = C.LLVMRealUNE
 	FloatPredicateTrue  FloatPredicate = C.LLVMRealPredicateTrue
+)
+
+//-------------------------------------------------------------------------
+// llvm.LandingPadClause
+//-------------------------------------------------------------------------
+
+const (
+	LandingPadCatch  LandingPadClause = C.LLVMLandingPadCatch
+	LandingPadFilter LandingPadClause = C.LLVMLandingPadFilter
 )
 
 //-------------------------------------------------------------------------
@@ -1700,6 +1710,27 @@ func (b Builder) CreatePtrDiff(lhs, rhs Value, name string) (v Value) {
 	v.C = C.LLVMBuildPtrDiff(b.C, lhs.C, rhs.C, cname)
 	C.free(unsafe.Pointer(cname))
 	return
+}
+
+//-------------------------------------------------------------------------
+// llvm.LandingPad
+//-------------------------------------------------------------------------
+
+type LandingPad Value
+
+func (b Builder) CreateLandingPad(t Type, personality Value, nclauses int, name string) LandingPad {
+	cname := C.CString(name)
+	lp := LandingPad{C: C.LLVMBuildLandingPad(b.C, t.C, personality.C, C.unsigned(nclauses), cname)}
+	C.free(unsafe.Pointer(cname))
+	return lp
+}
+
+func (l LandingPad) AddClause(v Value) {
+	C.LLVMAddClause(l.C, v.C)
+}
+
+func (l LandingPad) SetCleanup(cleanup bool) {
+	C.LLVMSetCleanup(l.C, boolToLLVMBool(cleanup))
 }
 
 //-------------------------------------------------------------------------
