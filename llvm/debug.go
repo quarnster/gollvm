@@ -31,7 +31,7 @@ import (
 // Common types and constants.
 
 const (
-	LLVMDebugVersion = (11 << 16)
+	LLVMDebugVersion = (12 << 16)
 )
 
 type DwarfTag uint32
@@ -45,6 +45,8 @@ const (
 	DW_TAG_subroutine_type DwarfTag = 0x15
 	DW_TAG_file_type       DwarfTag = 0x29
 	DW_TAG_subprogram      DwarfTag = 0x2E
+	DW_TAG_auto_variable   DwarfTag = 0x100
+	DW_TAG_arg_variable    DwarfTag = 0x101
 )
 
 type DwarfLang uint32
@@ -150,13 +152,13 @@ func (d *BasicTypeDescriptor) Tag() DwarfTag {
 func (d *BasicTypeDescriptor) mdNode(info *DebugInfo) Value {
 	return MDNode([]Value{
 		ConstInt(Int32Type(), LLVMDebugVersion+uint64(d.Tag()), false),
+		info.MDNode(d.File),
 		info.MDNode(d.Context),
 		MDString(d.Name),
-		info.MDNode(d.File),
 		ConstInt(Int32Type(), uint64(d.Line), false),
-		ConstInt(Int32Type(), d.Size, false),
-		ConstInt(Int32Type(), d.Alignment, false),
-		ConstInt(Int32Type(), d.Offset, false),
+		ConstInt(Int64Type(), d.Size, false),
+		ConstInt(Int64Type(), d.Alignment, false),
+		ConstInt(Int64Type(), d.Offset, false),
 		ConstInt(Int32Type(), uint64(d.Flags), false),
 		ConstInt(Int32Type(), uint64(d.TypeEncoding), false)})
 }
@@ -184,17 +186,19 @@ func (d *CompositeTypeDescriptor) Tag() DwarfTag {
 func (d *CompositeTypeDescriptor) mdNode(info *DebugInfo) Value {
 	return MDNode([]Value{
 		ConstInt(Int32Type(), LLVMDebugVersion+uint64(d.Tag()), false),
+		info.MDNode(d.File),
 		info.MDNode(d.Context),
 		MDString(d.Name),
-		info.MDNode(d.File),
 		ConstInt(Int32Type(), uint64(d.Line), false),
-		ConstInt(Int32Type(), d.Size, false),
-		ConstInt(Int32Type(), d.Alignment, false),
-		ConstInt(Int32Type(), d.Offset, false),
+		ConstInt(Int64Type(), d.Size, false),
+		ConstInt(Int64Type(), d.Alignment, false),
+		ConstInt(Int64Type(), d.Offset, false),
 		ConstInt(Int32Type(), uint64(d.Flags), false),
-		MDNode(nil),
+		MDNode(nil), // reference type derived from
 		MDNode(info.MDNodes(d.Members)),
-		ConstInt(Int32Type(), uint64(0), false)})
+		ConstInt(Int32Type(), uint64(0), false), // Runtime language
+		ConstInt(Int32Type(), uint64(0), false), // Base type containing the vtable pointer for this type
+	})
 }
 
 func NewStructCompositeType(
@@ -220,10 +224,9 @@ func NewSubroutineCompositeType(
 // Compilation Unit
 
 type CompileUnitDescriptor struct {
+	Path            FileDescriptor // Path to file being compiled.
 	Language        DwarfLang
-	Path            string // Path to file being compiled.
 	Producer        string
-	MainCompileUnit bool
 	Optimized       bool
 	CompilerFlags   string
 	Runtime         int32
@@ -238,22 +241,21 @@ func (d *CompileUnitDescriptor) Tag() DwarfTag {
 }
 
 func (d *CompileUnitDescriptor) mdNode(info *DebugInfo) Value {
-	dirname, filename := path.Split(d.Path)
 	return MDNode([]Value{
 		ConstInt(Int32Type(), uint64(d.Tag())+LLVMDebugVersion, false),
-		ConstNull(Int32Type()),
+		d.Path.mdNode(nil),
 		ConstInt(Int32Type(), uint64(d.Language), false),
-		MDString(filename),
-		MDString(dirname),
 		MDString(d.Producer),
-		constInt1(d.MainCompileUnit),
 		constInt1(d.Optimized),
 		MDString(d.CompilerFlags),
 		ConstInt(Int32Type(), uint64(d.Runtime), false),
 		MDNode(info.MDNodes(d.EnumTypes)),
 		MDNode(info.MDNodes(d.RetainedTypes)),
 		MDNode(info.MDNodes(d.Subprograms)),
-		MDNode(info.MDNodes(d.GlobalVariables))})
+		MDNode(info.MDNodes(d.GlobalVariables)),
+		MDNode(nil),  // List of imported entities
+		MDString(""), // Split debug filename
+	})
 }
 
 ///////////////////////////////////////////////////////////////////////////////
@@ -279,13 +281,13 @@ func (d *DerivedTypeDescriptor) Tag() DwarfTag {
 func (d *DerivedTypeDescriptor) mdNode(info *DebugInfo) Value {
 	return MDNode([]Value{
 		ConstInt(Int32Type(), LLVMDebugVersion+uint64(d.Tag()), false),
+		info.MDNode(d.File),
 		info.MDNode(d.Context),
 		MDString(d.Name),
-		info.MDNode(d.File),
 		ConstInt(Int32Type(), uint64(d.Line), false),
-		ConstInt(Int32Type(), d.Size, false),
-		ConstInt(Int32Type(), d.Alignment, false),
-		ConstInt(Int32Type(), d.Offset, false),
+		ConstInt(Int64Type(), d.Size, false),
+		ConstInt(Int64Type(), d.Alignment, false),
+		ConstInt(Int64Type(), d.Offset, false),
 		ConstInt(Int32Type(), uint64(d.Flags), false),
 		info.MDNode(d.Base)})
 }
@@ -304,10 +306,11 @@ type SubprogramDescriptor struct {
 	Context     DebugDescriptor
 	Name        string
 	DisplayName string
-	File        *FileDescriptor
 	Type        DebugDescriptor
 	Line        uint32
 	Function    Value
+	Path        FileDescriptor
+	ScopeLine   uint32
 	// Function declaration descriptor
 	// Function variables
 }
@@ -319,25 +322,26 @@ func (d *SubprogramDescriptor) Tag() DwarfTag {
 func (d *SubprogramDescriptor) mdNode(info *DebugInfo) Value {
 	return MDNode([]Value{
 		ConstInt(Int32Type(), LLVMDebugVersion+uint64(d.Tag()), false),
-		ConstNull(Int32Type()),
+		d.Path.mdNode(nil),
 		info.MDNode(d.Context),
 		MDString(d.Name),
 		MDString(d.DisplayName),
-		MDNode(nil),
-		info.MDNode(d.File),
+		MDString(""), // mips linkage name
 		ConstInt(Int32Type(), uint64(d.Line), false),
 		info.MDNode(d.Type),
 		ConstNull(Int1Type()),    // not static
 		ConstAllOnes(Int1Type()), // locally defined (not extern)
-		ConstNull(Int32Type()),
-		ConstNull(Int32Type()),
-		MDNode(nil),
-		ConstNull(Int32Type()), // flags
-		ConstNull(Int1Type()),  // not optimised
+		ConstNull(Int32Type()),   // virtuality
+		ConstNull(Int32Type()),   // index into a virtual function
+		MDNode(nil),              // basetype containing the vtable pointer
+		ConstNull(Int32Type()),   // flags
+		ConstNull(Int1Type()),    // not optimised
 		d.Function,
-		MDNode(nil),
-		MDNode(nil),  // function declaration descriptor
-		MDNode(nil)}) // function variables
+		MDNode(nil), // Template parameters
+		MDNode(nil), // function declaration descriptor
+		MDNode(nil), // function variables
+		ConstInt(Int32Type(), uint64(d.ScopeLine), false), // Line number where the scope of the subprogram begins
+	})
 }
 
 ///////////////////////////////////////////////////////////////////////////////
@@ -376,6 +380,40 @@ func (d *GlobalVariableDescriptor) mdNode(info *DebugInfo) Value {
 }
 
 ///////////////////////////////////////////////////////////////////////////////
+// Local Variables.
+
+type LocalVariableDescriptor struct {
+	tag      DwarfTag
+	Context  DebugDescriptor
+	Name     string
+	File     *FileDescriptor
+	Line     uint32
+	Argument uint32
+	Type     DebugDescriptor
+}
+
+func (d *LocalVariableDescriptor) Tag() DwarfTag {
+	return d.tag
+}
+
+func (d *LocalVariableDescriptor) mdNode(info *DebugInfo) Value {
+	return MDNode([]Value{
+		ConstInt(Int32Type(), uint64(d.Tag())+LLVMDebugVersion, false),
+		info.MDNode(d.File),
+		info.MDNode(d.Context),
+		MDString(d.Name),
+		ConstInt(Int32Type(), uint64(d.Line)<<8|uint64(d.Argument), false),
+		info.MDNode(d.Type),
+		ConstNull(Int32Type()), // flags
+		ConstNull(Int32Type()), // optional reference to inline location
+	})
+}
+
+func NewLocalVariableDescriptor(tag DwarfTag) *LocalVariableDescriptor {
+	return &LocalVariableDescriptor{tag: tag}
+}
+
+///////////////////////////////////////////////////////////////////////////////
 // Files.
 
 type FileDescriptor string
@@ -386,7 +424,38 @@ func (d *FileDescriptor) Tag() DwarfTag {
 
 func (d *FileDescriptor) mdNode(info *DebugInfo) Value {
 	dirname, filename := path.Split(string(*d))
-	return MDNode([]Value{MDString(filename), MDString(dirname), MDNode(nil)})
+	return MDNode([]Value{MDString(filename), MDString(dirname[:len(dirname)-1])})
+}
+
+///////////////////////////////////////////////////////////////////////////////
+// Context.
+
+type ContextDescriptor struct{ FileDescriptor }
+
+func (d *ContextDescriptor) mdNode(info *DebugInfo) Value {
+	return MDNode([]Value{ConstInt(Int32Type(), uint64(d.Tag())+LLVMDebugVersion, false), d.FileDescriptor.mdNode(info)})
+}
+
+///////////////////////////////////////////////////////////////////////////////
+// Context.
+
+type LineDescriptor struct {
+	Line    uint64
+	Column  uint64
+	Context DebugDescriptor
+}
+
+func (d *LineDescriptor) Tag() DwarfTag {
+	panic("LineDescriptor.Tag should never be called")
+}
+
+func (d *LineDescriptor) mdNode(info *DebugInfo) Value {
+	return MDNode([]Value{
+		ConstInt(Int32Type(), d.Line, false),
+		ConstInt(Int32Type(), d.Column, false),
+		info.MDNode(d.Context),
+		info.MDNode(nil),
+	})
 }
 
 // vim: set ft=go :

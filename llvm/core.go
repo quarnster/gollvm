@@ -781,6 +781,9 @@ func (c Context) MDNode(vals []Value) (v Value) {
 	return
 }
 func MDNode(vals []Value) (v Value) {
+	if vals == nil {
+		return MDNode([]Value{ConstNull(Int32Type())})
+	}
 	ptr, nvals := llvmValueRefs(vals)
 	v.C = C.LLVMMDNode(ptr, nvals)
 	return
