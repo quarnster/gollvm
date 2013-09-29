@@ -49,6 +49,23 @@ const (
 	DW_TAG_arg_variable    DwarfTag = 0x101
 )
 
+const (
+	FlagPrivate = 1 << iota
+	FlagProtected
+	FlagFwdDecl
+	FlagAppleBlock
+	FlagBlockByrefStruct
+	FlagVirtual
+	FlagArtificial
+	FlagExplicit
+	FlagPrototyped
+	FlagObjcClassComplete
+	FlagObjectPointer
+	FlagVector
+	FlagStaticMember
+	FlagIndirectVariable
+)
+
 type DwarfLang uint32
 
 const (
@@ -194,7 +211,7 @@ func (d *CompositeTypeDescriptor) mdNode(info *DebugInfo) Value {
 		ConstInt(Int64Type(), d.Alignment, false),
 		ConstInt(Int64Type(), d.Offset, false),
 		ConstInt(Int32Type(), uint64(d.Flags), false),
-		MDNode(nil), // reference type derived from
+		info.MDNode(nil), // reference type derived from
 		MDNode(info.MDNodes(d.Members)),
 		ConstInt(Int32Type(), uint64(0), false), // Runtime language
 		ConstInt(Int32Type(), uint64(0), false), // Base type containing the vtable pointer for this type
@@ -329,17 +346,17 @@ func (d *SubprogramDescriptor) mdNode(info *DebugInfo) Value {
 		MDString(""), // mips linkage name
 		ConstInt(Int32Type(), uint64(d.Line), false),
 		info.MDNode(d.Type),
-		ConstNull(Int1Type()),    // not static
-		ConstAllOnes(Int1Type()), // locally defined (not extern)
-		ConstNull(Int32Type()),   // virtuality
-		ConstNull(Int32Type()),   // index into a virtual function
-		MDNode(nil),              // basetype containing the vtable pointer
-		ConstNull(Int32Type()),   // flags
-		ConstNull(Int1Type()),    // not optimised
+		ConstNull(Int1Type()),                        // not static
+		ConstAllOnes(Int1Type()),                     // locally defined (not extern)
+		ConstNull(Int32Type()),                       // virtuality
+		ConstNull(Int32Type()),                       // index into a virtual function
+		info.MDNode(nil),                             // basetype containing the vtable pointer
+		ConstInt(Int32Type(), FlagPrototyped, false), // flags
+		ConstNull(Int1Type()),                        // not optimised
 		d.Function,
-		MDNode(nil), // Template parameters
-		MDNode(nil), // function declaration descriptor
-		MDNode(nil), // function variables
+		info.MDNode(nil), // Template parameters
+		info.MDNode(nil), // function declaration descriptor
+		MDNode(nil),      // function variables
 		ConstInt(Int32Type(), uint64(d.ScopeLine), false), // Line number where the scope of the subprogram begins
 	})
 }
@@ -399,10 +416,10 @@ func (d *LocalVariableDescriptor) Tag() DwarfTag {
 func (d *LocalVariableDescriptor) mdNode(info *DebugInfo) Value {
 	return MDNode([]Value{
 		ConstInt(Int32Type(), uint64(d.Tag())+LLVMDebugVersion, false),
-		info.MDNode(d.File),
 		info.MDNode(d.Context),
 		MDString(d.Name),
-		ConstInt(Int32Type(), uint64(d.Line)<<8|uint64(d.Argument), false),
+		info.MDNode(d.File),
+		ConstInt(Int32Type(), uint64(d.Line)|(uint64(d.Argument)<<24), false),
 		info.MDNode(d.Type),
 		ConstNull(Int32Type()), // flags
 		ConstNull(Int32Type()), // optional reference to inline location
@@ -424,7 +441,10 @@ func (d *FileDescriptor) Tag() DwarfTag {
 
 func (d *FileDescriptor) mdNode(info *DebugInfo) Value {
 	dirname, filename := path.Split(string(*d))
-	return MDNode([]Value{MDString(filename), MDString(dirname[:len(dirname)-1])})
+	if l := len(dirname); l > 0 && dirname[l-1] == '/' {
+		dirname = dirname[:l-1]
+	}
+	return MDNode([]Value{MDString(filename), MDString(dirname)})
 }
 
 ///////////////////////////////////////////////////////////////////////////////
