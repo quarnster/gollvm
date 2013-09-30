@@ -37,6 +37,7 @@ const (
 type DwarfTag uint32
 
 const (
+	DW_TAG_lexical_block   DwarfTag = 0x0b
 	DW_TAG_compile_unit    DwarfTag = 0x11
 	DW_TAG_variable        DwarfTag = 0x34
 	DW_TAG_base_type       DwarfTag = 0x24
@@ -403,7 +404,7 @@ type LocalVariableDescriptor struct {
 	tag      DwarfTag
 	Context  DebugDescriptor
 	Name     string
-	File     *FileDescriptor
+	File     DebugDescriptor
 	Line     uint32
 	Argument uint32
 	Type     DebugDescriptor
@@ -448,20 +449,11 @@ func (d *FileDescriptor) mdNode(info *DebugInfo) Value {
 }
 
 ///////////////////////////////////////////////////////////////////////////////
-// Context.
-
-type ContextDescriptor struct{ FileDescriptor }
-
-func (d *ContextDescriptor) mdNode(info *DebugInfo) Value {
-	return MDNode([]Value{ConstInt(Int32Type(), uint64(d.Tag())+LLVMDebugVersion, false), d.FileDescriptor.mdNode(info)})
-}
-
-///////////////////////////////////////////////////////////////////////////////
-// Context.
+// Line.
 
 type LineDescriptor struct {
-	Line    uint64
-	Column  uint64
+	Line    uint32
+	Column  uint32
 	Context DebugDescriptor
 }
 
@@ -471,10 +463,45 @@ func (d *LineDescriptor) Tag() DwarfTag {
 
 func (d *LineDescriptor) mdNode(info *DebugInfo) Value {
 	return MDNode([]Value{
-		ConstInt(Int32Type(), d.Line, false),
-		ConstInt(Int32Type(), d.Column, false),
+		ConstInt(Int32Type(), uint64(d.Line), false),
+		ConstInt(Int32Type(), uint64(d.Column), false),
 		info.MDNode(d.Context),
 		info.MDNode(nil),
+	})
+}
+
+///////////////////////////////////////////////////////////////////////////////
+// Context.
+
+type ContextDescriptor struct{ FileDescriptor }
+
+func (d *ContextDescriptor) mdNode(info *DebugInfo) Value {
+	return MDNode([]Value{ConstInt(Int32Type(), uint64(d.Tag())+LLVMDebugVersion, false), d.FileDescriptor.mdNode(info)})
+}
+
+///////////////////////////////////////////////////////////////////////////////
+// Block.
+
+type BlockDescriptor struct {
+	File    *FileDescriptor
+	Context DebugDescriptor
+	Line    uint32
+	Column  uint32
+	Id      uint32
+}
+
+func (d *BlockDescriptor) Tag() DwarfTag {
+	return DW_TAG_lexical_block
+}
+
+func (d *BlockDescriptor) mdNode(info *DebugInfo) Value {
+	return MDNode([]Value{
+		ConstInt(Int32Type(), uint64(d.Tag())+LLVMDebugVersion, false),
+		info.MDNode(d.File),
+		info.MDNode(d.Context),
+		ConstInt(Int32Type(), uint64(d.Line), false),
+		ConstInt(Int32Type(), uint64(d.Column), false),
+		ConstInt(Int32Type(), uint64(d.Id), false),
 	})
 }
 
